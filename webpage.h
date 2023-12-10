@@ -4,6 +4,7 @@ const char body[] PROGMEM = R"===(
     <body>
     <!--TODO some ui feedback for button presses or something-->
     <span>
+      <button onlick="window.location.href = 'switchmode?val=0';">Stop</button>
       <button onclick="window.location.href = 'switchmode?val=1';">Wall Follow</button>
       <button onclick="window.location.href = 'switchmode?val=2';">Push Police Car</button>
       <button onclick="window.location.href = 'switchmode?val=3';">Nav Fake Trophy</button>

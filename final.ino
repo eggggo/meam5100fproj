@@ -76,7 +76,6 @@ esp_now_peer_info_t peer1 = {
 uint8_t espnow_msg[200];
 
 // sliding window avg of 5 ir freq measurements
-// to get avg divide sums by 5
 int ir1_freq[5] = {0}, ir2_freq[5] = {0}, ir1_freq_idx, ir2_freq_idx,
     ir1_freq_sum, ir2_freq_sum;
 unsigned long ir1_rise, ir2_rise;
@@ -85,7 +84,8 @@ unsigned long ir1_rise, ir2_rise;
  * 0: stop
  * 1: wall follow
  * 2: police car push
- * 3: trophy locate
+ * 3: fake trophy nav
+ * 4: real trophy nav
  */
 short mode = 0;
 
@@ -310,6 +310,9 @@ void loop() {
       status = sensor_vl53l4cx_sat.VL53L4CX_ClearInterruptAndStartMeasurement();
     }
   }
+  // ir readings for left and right beacons for use in below task behavior
+  int ir1_freq_avg = ir1_freq_sum / 5;
+  int ir2_freq_avg = ir2_freq_sum / 5;
 
   // comms stuff
   rcv_pc_udp();
