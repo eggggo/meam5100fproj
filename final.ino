@@ -74,8 +74,9 @@ esp_now_peer_info_t peer1 = {
 uint8_t espnow_msg[200];
 
 // sliding window avg of 5 ir freq measurements
-int ir1_freq[5] = {0}, ir2_freq[5] = {0}, ir1_freq_idx=0, ir2_freq_idx=0,
-    ir1_freq_sum=0, ir2_freq_sum=0;
+int ir1_freq[5] = {0, 0, 0, 0, 0}, ir2_freq[5] = {0, 0, 0, 0, 0};
+int ir1_freq_idx=0, ir2_freq_idx=0;
+int ir1_freq_sum=0, ir2_freq_sum=0;
 unsigned long ir1_rise, ir2_rise;
 
 /*
@@ -93,10 +94,14 @@ void stop() {
   ledcWrite(1, 0);
 }
 
-void turn() {
+void xmlTurn() {
+  int dir = h.getVal();
+  turn(dir);
+}
+
+void turn(int dir) {
   // m1 backwards, m2 forwards for left, vice versa for right
   // val param = 0 is left, 1 is right
-  int dir = h.getVal();
   digitalWrite(M1_H1_PIN, 1 - dir);
   digitalWrite(M2_H1_PIN, dir);
 
@@ -104,9 +109,13 @@ void turn() {
   ledcWrite(1, 1023);
 }
 
-void straight() {
-  // val param 0 forwards, 1 backwards
+void xmlStraight() {
   int dir = h.getVal();
+  straight(dir);
+}
+
+void straight(int dir) {
+  // val param 0 forwards, 1 backwards
   digitalWrite(M1_H1_PIN, 1 - dir);
   digitalWrite(M2_H1_PIN, 1 - dir);
 
@@ -162,7 +171,8 @@ void ir1_onchange() {
   } else {
     unsigned long now = millis();
     ir1_freq_sum -= ir1_freq[ir1_freq_idx];
-    ir1_freq[ir1_freq_idx] = 1000 / (now - ir1_rise);
+    float diff = (float)(now - ir1_rise);
+    ir1_freq[ir1_freq_idx] = diff == 0 ? 0 : (int)(500.f / diff);
     ir1_freq_sum += ir1_freq[ir1_freq_idx];
     ir1_freq_idx = (ir1_freq_idx + 1) % 5;
   }
@@ -174,7 +184,8 @@ void ir2_onchange() {
   } else {
     unsigned long now = millis();
     ir2_freq_sum -= ir2_freq[ir2_freq_idx];
-    ir2_freq[ir2_freq_idx] = 1000 / (now - ir2_rise);
+    float diff = (float)(now - ir2_rise);
+    ir2_freq[ir2_freq_idx] = diff == 0 ? 0 : (int)(500.f / diff);
     ir2_freq_sum += ir2_freq[ir2_freq_idx];
     ir2_freq_idx = (ir2_freq_idx + 1) % 5;
   }
@@ -257,8 +268,8 @@ void setup() {
   h.begin();
   h.attachHandler("/ ", handleRoot);
   // left in for movement testing
-  h.attachHandler("/straight?val=", straight);
-  h.attachHandler("/turn?val=", turn);
+  h.attachHandler("/straight?val=", xmlStraight);
+  h.attachHandler("/turn?val=", xmlTurn);
   h.attachHandler("/stop", stop);
   h.attachHandler("/switchmode?val=", switchMode);
 }
@@ -295,6 +306,7 @@ void loop() {
       for (j = 0; j < no_of_object_found; j++) {
         if (pMultiRangingData->RangeData[j].RangeStatus == 0) {
           // TODO filter and find closest obj dist, update closest_tof_dist
+          //Serial.println(pMultiRangingData->RangeData[j].RangeMilliMeter);
           // int16_t dist = pMultiRangingData->RangeData[j].RangeMilliMeter;
         }
       }
@@ -302,8 +314,13 @@ void loop() {
     }
   }
   // ir readings for left and right beacons for use in below task behavior
-  // int ir1_freq_avg = ir1_freq_sum / 5;
-  // int ir2_freq_avg = ir2_freq_sum / 5;
+  int ir1_freq_avg = ir1_freq_sum / 5;
+  int ir2_freq_avg = ir2_freq_sum / 5;
+
+  Serial.print("ir1: ");
+  Serial.println(ir1_freq_avg);
+  Serial.print("ir2: ");
+  Serial.println(ir2_freq_avg);
 
   // comms stuff
   //rcv_pc_udp();
@@ -313,23 +330,27 @@ void loop() {
   // locate) change behavior
   switch (mode) {
     case 0: {
-      //stop();
+      stop();
       break;
     }
     case 1: {
-      // TODO wall follow
-      break;
+      // wall follow
+      //TOF value = tof_val
+      //minimum distance to wall = min_dist
+
     }
     case 2: {
-      // TODO police car push
+      // police car push
       break;
     }
     case 3: {
-      // TODO fake trophy locate
+      // fake trophy locate
+      
       break;
     }
     case 4: {
-      // TODO real trophy locate
+      // real trophy locate
+      
       break;
     }
   }
