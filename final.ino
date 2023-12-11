@@ -17,10 +17,8 @@ Group 38
 // assumes m1 on left, m2 on right from back of bot
 #define M1_PWM_PIN 45
 #define M1_H1_PIN 40
-#define M1_H2_PIN 41
 #define M2_PWM_PIN 35
-#define M2_H1_PIN 36
-#define M2_H2_PIN 37
+#define M2_H1_PIN 37
 
 #define VIVE1_PIN 1
 #define VIVE2_PIN 2
@@ -76,8 +74,8 @@ esp_now_peer_info_t peer1 = {
 uint8_t espnow_msg[200];
 
 // sliding window avg of 5 ir freq measurements
-int ir1_freq[5] = {0}, ir2_freq[5] = {0}, ir1_freq_idx, ir2_freq_idx,
-    ir1_freq_sum, ir2_freq_sum;
+int ir1_freq[5] = {0}, ir2_freq[5] = {0}, ir1_freq_idx=0, ir2_freq_idx=0,
+    ir1_freq_sum=0, ir2_freq_sum=0;
 unsigned long ir1_rise, ir2_rise;
 
 /*
@@ -100,9 +98,7 @@ void turn() {
   // val param = 0 is left, 1 is right
   int dir = h.getVal();
   digitalWrite(M1_H1_PIN, 1 - dir);
-  digitalWrite(M1_H2_PIN, dir);
   digitalWrite(M2_H1_PIN, dir);
-  digitalWrite(M2_H2_PIN, 1 - dir);
 
   ledcWrite(0, 1023);
   ledcWrite(1, 1023);
@@ -112,9 +108,7 @@ void straight() {
   // val param 0 forwards, 1 backwards
   int dir = h.getVal();
   digitalWrite(M1_H1_PIN, 1 - dir);
-  digitalWrite(M1_H2_PIN, dir);
   digitalWrite(M2_H1_PIN, 1 - dir);
-  digitalWrite(M2_H2_PIN, dir);
 
   ledcWrite(0, 1023);
   ledcWrite(1, 1023);
@@ -126,39 +120,39 @@ void handleRoot() {
 }
 
 // udp receiver for reading police car vive coords
-void rcv_pc_udp() {
-  const int UDP_PACKET_SIZE = 14;  // can be up to 65535          
-  uint8_t packetBuffer[UDP_PACKET_SIZE];
+// void rcv_pc_udp() {
+//   const int UDP_PACKET_SIZE = 14;  // can be up to 65535          
+//   uint8_t packetBuffer[UDP_PACKET_SIZE];
 
-  int cb = PC_UDPServer.parsePacket();  // if there is no message cb=0
-  if (cb) {
-    packetBuffer[13] = 0;  // null terminate string
+//   int cb = PC_UDPServer.parsePacket();  // if there is no message cb=0
+//   if (cb) {
+//     packetBuffer[13] = 0;  // null terminate string
 
-    // format of buffer(14 bytes)
-    // team #(2 byte), 0, x(4 byte), 0, y(4 byte), 0, 0
-    PC_UDPServer.read(packetBuffer, UDP_PACKET_SIZE);
-    String s = (char*)packetBuffer;
-    // police car from team 00
-    if (s == "00") {
-      pc_x = atoi((char*)packetBuffer + 3);  // ##,####,#### 2nd indexed char
-      pc_y = atoi((char*)packetBuffer + 8);  // ##,####,#### 7th indexed char
-    }
-  }
-}
+//     // format of buffer(14 bytes)
+//     // team #(2 byte), 0, x(4 byte), 0, y(4 byte), 0, 0
+//     PC_UDPServer.read(packetBuffer, UDP_PACKET_SIZE);
+//     String s = (char*)packetBuffer;
+//     // police car from team 00
+//     if (s == "00") {
+//       pc_x = atoi((char*)packetBuffer + 3);  // ##,####,#### 2nd indexed char
+//       pc_y = atoi((char*)packetBuffer + 8);  // ##,####,#### 7th indexed char
+//     }
+//   }
+// }
 
 // marshal and send own vive coords to tgt_IP
-void send_vive_udp() {
-  const int UDP_PACKET_SIZE = 14;  // can be up to 65535
-  uint8_t packetBuffer[UDP_PACKET_SIZE] = {0};
-  // same format as above
-  itoa(TEAM_NUM, (char*)packetBuffer, 10);
-  itoa(v1x, (char*)packetBuffer + 3, 10);
-  itoa(v1y, (char*)packetBuffer + 8, 10);
+// void send_vive_udp() {
+//   const int UDP_PACKET_SIZE = 14;  // can be up to 65535
+//   uint8_t packetBuffer[UDP_PACKET_SIZE] = {0};
+//   // same format as above
+//   itoa(TEAM_NUM, (char*)packetBuffer, 10);
+//   itoa(v1x, (char*)packetBuffer + 3, 10);
+//   itoa(v1y, (char*)packetBuffer + 8, 10);
 
-  Vive_UDPServer.beginPacket(tgt_IP, VIVE_TGT_UDPPORT);
-  Vive_UDPServer.write(packetBuffer, UDP_PACKET_SIZE);
-  Vive_UDPServer.endPacket();
-}
+//   Vive_UDPServer.beginPacket(tgt_IP, VIVE_TGT_UDPPORT);
+//   Vive_UDPServer.write(packetBuffer, UDP_PACKET_SIZE);
+//   Vive_UDPServer.endPacket();
+// }
 
 // would really like to merge these...
 // ir interrupts on digital read change
@@ -188,7 +182,7 @@ void ir2_onchange() {
 
 // timer interrupt for 1hz vive coord reporting
 void IRAM_ATTR one_hz_timer() {
-  send_vive_udp();
+  //send_vive_udp();
 }
 
 // change mode based on user web req, log packet
@@ -202,13 +196,10 @@ void setup() {
   ledcSetup(0, M_FREQ, RES_BITS);
   ledcAttachPin(M1_PWM_PIN, 0);
   ledcSetup(1, M_FREQ, RES_BITS);
-  ledcAttachPin(M2_PWM_PIN, 0);
+  ledcAttachPin(M2_PWM_PIN, 1);
   // setup dir control pins for both motors
   pinMode(M1_H1_PIN, OUTPUT);
-  pinMode(M1_H2_PIN, OUTPUT);
   pinMode(M2_H1_PIN, OUTPUT);
-  pinMode(M2_H2_PIN, OUTPUT);
-  digitalWrite(2, HIGH);
   // setup vive
   vive1.begin();
   vive2.begin();
@@ -242,9 +233,9 @@ void setup() {
   Serial.print(WiFi.localIP());
   Serial.println("/");
 
-  PC_UDPServer.begin(PC_UDPPORT);
+  //PC_UDPServer.begin(PC_UDPPORT);
   // FIXME if same tgt as above can merge
-  Vive_UDPServer.begin(VIVE_TGT_UDPPORT);
+  //Vive_UDPServer.begin(VIVE_TGT_UDPPORT);
   // setup timer autofire for vive reporting at 1hz
   timer = timerBegin(0, 80, true);
   timerAttachInterrupt(timer, &one_hz_timer, false);
@@ -311,18 +302,18 @@ void loop() {
     }
   }
   // ir readings for left and right beacons for use in below task behavior
-  int ir1_freq_avg = ir1_freq_sum / 5;
-  int ir2_freq_avg = ir2_freq_sum / 5;
+  // int ir1_freq_avg = ir1_freq_sum / 5;
+  // int ir2_freq_avg = ir2_freq_sum / 5;
 
   // comms stuff
-  rcv_pc_udp();
+  //rcv_pc_udp();
   h.serve();
 
   // depending on current task mode (wall follow, police car push, trophy
   // locate) change behavior
   switch (mode) {
     case 0: {
-      stop();
+      //stop();
       break;
     }
     case 1: {

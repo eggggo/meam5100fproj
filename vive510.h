@@ -7,7 +7,6 @@
 
 #ifndef VIVE510
 #define VIVE510
-#define DEBUG2
 
 #include <arduino.h>
 

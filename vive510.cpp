@@ -9,8 +9,6 @@
  */
 
 #include "vive510.h"
-#define DEBUG
-#define DEBUG2
 
 portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 
