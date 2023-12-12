@@ -7,7 +7,9 @@ Group 38
 #include <WiFiUdp.h>
 #include <Wire.h>
 #include <esp_now.h>
-#include <vl53l4cx_class.h>
+//#include <vl53l4cx_class.h>
+#include <stdio.h>
+#include <string.h>
 #include "html510.h"
 #include "vive510.h"
 #include "webpage.h"
@@ -26,15 +28,14 @@ Group 38
 #define IR1_PIN 3
 #define IR2_PIN 4
 
-#define TOF_SCL 11
-#define TOF_SDA 10
-#define TOF_XSHUT 9
+// #define TOF_SCL 11
+// #define TOF_SDA 10
+// #define TOF_XSHUT 9
 
 #define M_FREQ 2000
 #define RES_BITS 10
 
-#define PC_UDPPORT 2510
-#define VIVE_TGT_UDPPORT 2808
+#define GAME_UDPPORT 2510
 
 #define ESPNOW_CHANNEL 1
 // FIXME fill in mac address of tgt
@@ -44,11 +45,9 @@ Group 38
 const char* ssid = "TP-Link_E0C8";
 const char* pass = "52665134";
 IPAddress src_IP(192, 168, 0, 154);
-// FIXME fill in tgt_IP with dest for vive coords
-IPAddress tgt_IP(192, 168, 0, 0);
+IPAddress broadcast_IP(192, 168, 0, 255);
 HTML510Server h(80);
-WiFiUDP PC_UDPServer;
-WiFiUDP Vive_UDPServer;
+WiFiUDP UDPServer;
 
 Vive510 vive1(VIVE1_PIN);
 Vive510 vive2(VIVE2_PIN);
@@ -57,7 +56,7 @@ Vive510 vive2(VIVE2_PIN);
 uint16_t v1x, v1y, v2x, v2y;
 float heading;
 
-VL53L4CX sensor_vl53l4cx_sat(&Wire, TOF_XSHUT);
+//VL53L4CX sensor_vl53l4cx_sat(&Wire, TOF_XSHUT);
 // closest tof obj dist (mm)
 int closest_tof_dist;
 
@@ -71,7 +70,7 @@ esp_now_peer_info_t peer1 = {
     .channel = ESPNOW_CHANNEL,
     .encrypt = false,
 };
-uint8_t espnow_msg[200];
+uint8_t espnow_msg[1];
 
 // sliding window avg of 5 ir freq measurements
 int ir1_freq[5] = {0, 0, 0, 0, 0}, ir2_freq[5] = {0, 0, 0, 0, 0};
@@ -96,31 +95,31 @@ void stop() {
 
 void xmlTurn() {
   int dir = h.getVal();
-  turn(dir);
+  turn(dir, 1023);
 }
 
-void turn(int dir) {
+void turn(int dir, int duty) {
   // m1 backwards, m2 forwards for left, vice versa for right
   // val param = 0 is left, 1 is right
   digitalWrite(M1_H1_PIN, 1 - dir);
   digitalWrite(M2_H1_PIN, dir);
 
-  ledcWrite(0, 1023);
-  ledcWrite(1, 1023);
+  ledcWrite(0, duty);
+  ledcWrite(1, duty);
 }
 
 void xmlStraight() {
   int dir = h.getVal();
-  straight(dir);
+  straight(dir, 1023);
 }
 
-void straight(int dir) {
+void straight(int dir, int duty) {
   // val param 0 forwards, 1 backwards
   digitalWrite(M1_H1_PIN, 1 - dir);
   digitalWrite(M2_H1_PIN, 1 - dir);
 
-  ledcWrite(0, 1023);
-  ledcWrite(1, 1023);
+  ledcWrite(0, duty);
+  ledcWrite(1, duty);
 }
 
 // comm handlers
@@ -128,78 +127,74 @@ void handleRoot() {
   h.sendhtml(body);
 }
 
-// udp receiver for reading police car vive coords
-// void rcv_pc_udp() {
-//   const int UDP_PACKET_SIZE = 14;  // can be up to 65535          
-//   uint8_t packetBuffer[UDP_PACKET_SIZE];
+//handle all udp server actions(rcv and transmit vive coords)
+void handleUDPServer() {
+  const int UDP_PACKET_SIZE = 14; // can be up to 65535          
+  uint8_t packetBuffer[UDP_PACKET_SIZE];
 
-//   int cb = PC_UDPServer.parsePacket();  // if there is no message cb=0
-//   if (cb) {
-//     packetBuffer[13] = 0;  // null terminate string
+  int cb = UDPServer.parsePacket(); // if there is no message cb=0
+  while (cb) {
+    packetBuffer[13]=0; // null terminate string
 
-//     // format of buffer(14 bytes)
-//     // team #(2 byte), 0, x(4 byte), 0, y(4 byte), 0, 0
-//     PC_UDPServer.read(packetBuffer, UDP_PACKET_SIZE);
-//     String s = (char*)packetBuffer;
-//     // police car from team 00
-//     if (s == "00") {
-//       pc_x = atoi((char*)packetBuffer + 3);  // ##,####,#### 2nd indexed char
-//       pc_y = atoi((char*)packetBuffer + 8);  // ##,####,#### 7th indexed char
-//     }
-//   }
-// }
+    //rcv police car
+    UDPServer.read(packetBuffer, UDP_PACKET_SIZE);
+    int x = atoi((char *)packetBuffer+3); // ##,####,#### 2nd indexed char
+    int y = atoi((char *)packetBuffer+8); // ##,####,#### 7th indexed char
+    if (strcmp((char*)packetBuffer, "00") == 0) {
+      pc_x = x;
+      pc_y = y;
+    }
+    cb = UDPServer.parsePacket();
+  }
 
-// marshal and send own vive coords to tgt_IP
-// void send_vive_udp() {
-//   const int UDP_PACKET_SIZE = 14;  // can be up to 65535
-//   uint8_t packetBuffer[UDP_PACKET_SIZE] = {0};
-//   // same format as above
-//   itoa(TEAM_NUM, (char*)packetBuffer, 10);
-//   itoa(v1x, (char*)packetBuffer + 3, 10);
-//   itoa(v1y, (char*)packetBuffer + 8, 10);
-
-//   Vive_UDPServer.beginPacket(tgt_IP, VIVE_TGT_UDPPORT);
-//   Vive_UDPServer.write(packetBuffer, UDP_PACKET_SIZE);
-//   Vive_UDPServer.endPacket();
-// }
+   //send own coords
+  // uint8_t outPBuffer[UDP_PACKET_SIZE];
+  // outPBuffer[13] = 0;
+  // itoa(TEAM_NUM, (char*)outPBuffer, 10);
+  // outPBuffer[2] = 0;
+  // itoa(v1x, (char*)outPBuffer + 3, 10);
+  // outPBuffer[7] = 0;
+  // itoa(v1y, (char*)outPBuffer + 8, 10);
+  // UDPServer.beginPacket(broadcast_IP, GAME_UDPPORT);
+  // UDPServer.write(outPBuffer, UDP_PACKET_SIZE);
+  // UDPServer.endPacket();
+}
 
 // would really like to merge these...
 // ir interrupts on digital read change
 void ir1_onchange() {
-  if (digitalRead(IR1_PIN) == HIGH) {
-    ir1_rise = millis();
-  } else {
-    unsigned long now = millis();
-    ir1_freq_sum -= ir1_freq[ir1_freq_idx];
-    float diff = (float)(now - ir1_rise);
-    ir1_freq[ir1_freq_idx] = diff == 0 ? 0 : (int)(500.f / diff);
-    ir1_freq_sum += ir1_freq[ir1_freq_idx];
-    ir1_freq_idx = (ir1_freq_idx + 1) % 5;
-  }
+  unsigned long now = micros();
+  double diff = (now - ir1_rise);
+  if (diff < 500 || diff > 1000000) return;
+  diff /= 1000.f;
+  ir1_freq_sum -= ir1_freq[ir1_freq_idx];
+  ir1_freq[ir1_freq_idx] = (int)(1000.f / diff);
+  ir1_freq_sum += ir1_freq[ir1_freq_idx];
+  ir1_freq_idx = (ir1_freq_idx + 1) % 5;
+  ir1_rise = now;
 }
 
 void ir2_onchange() {
-  if (digitalRead(IR2_PIN) == HIGH) {
-    ir2_rise = millis();
-  } else {
-    unsigned long now = millis();
-    ir2_freq_sum -= ir2_freq[ir2_freq_idx];
-    float diff = (float)(now - ir2_rise);
-    ir2_freq[ir2_freq_idx] = diff == 0 ? 0 : (int)(500.f / diff);
-    ir2_freq_sum += ir2_freq[ir2_freq_idx];
-    ir2_freq_idx = (ir2_freq_idx + 1) % 5;
-  }
+  unsigned long now = micros();
+  double diff = (now - ir2_rise);
+  if (diff < 500 || diff > 1000000) return;
+  diff /= 1000.f;
+  ir2_freq_sum -= ir2_freq[ir2_freq_idx];
+  ir2_freq[ir2_freq_idx] = (int)(1000.f / diff);
+  ir2_freq_sum += ir2_freq[ir2_freq_idx];
+  ir2_freq_idx = (ir2_freq_idx + 1) % 5;
+  ir2_rise = now;
 }
 
-// timer interrupt for 1hz vive coord reporting
+// timer interrupt for 1hz vive coord report and rcv
 void IRAM_ATTR one_hz_timer() {
-  //send_vive_udp();
+  handleUDPServer();
 }
 
 // change mode based on user web req, log packet
 void switchMode() {
   mode = h.getVal();
-  esp_now_send(peer1.peer_addr, espnow_msg, sizeof(espnow_msg));
+  //esp_now_send(peer1.peer_addr, espnow_msg, sizeof(espnow_msg));
 }
 
 void setup() {
@@ -218,15 +213,15 @@ void setup() {
   pinMode(IR1_PIN, INPUT);
   pinMode(IR2_PIN, INPUT);
   // setup TOF
-  Wire.setPins(TOF_SDA, TOF_SCL);
-  Wire.begin();
-  sensor_vl53l4cx_sat.begin();
-  sensor_vl53l4cx_sat.VL53L4CX_Off();
-  sensor_vl53l4cx_sat.InitSensor(0x12);
-  sensor_vl53l4cx_sat.VL53L4CX_StartMeasurement();
+  // Wire.setPins(TOF_SDA, TOF_SCL);
+  // Wire.begin();
+  // sensor_vl53l4cx_sat.begin();
+  // sensor_vl53l4cx_sat.VL53L4CX_Off();
+  // sensor_vl53l4cx_sat.InitSensor(0x12);
+  // sensor_vl53l4cx_sat.VL53L4CX_StartMeasurement();
   // ir frequency measurements
-  attachInterrupt(digitalPinToInterrupt(IR1_PIN), ir1_onchange, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(IR2_PIN), ir2_onchange, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(IR1_PIN), ir1_onchange, RISING);
+  attachInterrupt(digitalPinToInterrupt(IR2_PIN), ir2_onchange, RISING);
 
   // setup udp send/receive for vive send and police car coord rcv + web server
   Serial.begin(9600);
@@ -244,9 +239,8 @@ void setup() {
   Serial.print(WiFi.localIP());
   Serial.println("/");
 
-  //PC_UDPServer.begin(PC_UDPPORT);
-  // FIXME if same tgt as above can merge
-  //Vive_UDPServer.begin(VIVE_TGT_UDPPORT);
+  UDPServer.begin(GAME_UDPPORT);
+
   // setup timer autofire for vive reporting at 1hz
   timer = timerBegin(0, 80, true);
   timerAttachInterrupt(timer, &one_hz_timer, false);
@@ -260,8 +254,8 @@ void setup() {
   if (esp_now_add_peer(&peer1) != ESP_OK) {
     Serial.println("Failed to add peer");
   }
-  // FIXME with actual espnow msg format
-  sprintf((char*)espnow_msg, "Hello from team %d", TEAM_NUM);
+  // 1 byte with team num
+  espnow_msg[0] = TEAM_NUM;
   // FIXME not integrated with movement keys since they should be temporary?
 
   // html page handlers(only called on transition states)
@@ -289,30 +283,34 @@ void loop() {
   } else {
     vive2.sync(15);
   }
+  Serial.print("vive x: ");
+  Serial.println(v1x);
+  Serial.print("vive y: ");
+  Serial.println(v1y);
   // heading calculation
   heading = atan2(v2y - v1y, v2x - v1x);
   // TOF reading
-  VL53L4CX_MultiRangingData_t MultiRangingData;
-  VL53L4CX_MultiRangingData_t* pMultiRangingData = &MultiRangingData;
-  uint8_t NewDataReady = 0;
-  int no_of_object_found = 0, j;
-  int status =
-      sensor_vl53l4cx_sat.VL53L4CX_GetMeasurementDataReady(&NewDataReady);
-  if (!status && NewDataReady != 0) {
-    status =
-        sensor_vl53l4cx_sat.VL53L4CX_GetMultiRangingData(pMultiRangingData);
-    if (!status) {
-      no_of_object_found = pMultiRangingData->NumberOfObjectsFound;
-      for (j = 0; j < no_of_object_found; j++) {
-        if (pMultiRangingData->RangeData[j].RangeStatus == 0) {
-          // TODO filter and find closest obj dist, update closest_tof_dist
-          //Serial.println(pMultiRangingData->RangeData[j].RangeMilliMeter);
-          // int16_t dist = pMultiRangingData->RangeData[j].RangeMilliMeter;
-        }
-      }
-      status = sensor_vl53l4cx_sat.VL53L4CX_ClearInterruptAndStartMeasurement();
-    }
-  }
+  // VL53L4CX_MultiRangingData_t MultiRangingData;
+  // VL53L4CX_MultiRangingData_t* pMultiRangingData = &MultiRangingData;
+  // uint8_t NewDataReady = 0;
+  // int no_of_object_found = 0, j;
+  // int status =
+  //     sensor_vl53l4cx_sat.VL53L4CX_GetMeasurementDataReady(&NewDataReady);
+  // if (!status && NewDataReady != 0) {
+  //   status =
+  //       sensor_vl53l4cx_sat.VL53L4CX_GetMultiRangingData(pMultiRangingData);
+  //   if (!status) {
+  //     no_of_object_found = pMultiRangingData->NumberOfObjectsFound;
+  //     for (j = 0; j < no_of_object_found; j++) {
+  //       if (pMultiRangingData->RangeData[j].RangeStatus == 0) {
+  //         // TODO filter and find closest obj dist, update closest_tof_dist
+  //         //Serial.println(pMultiRangingData->RangeData[j].RangeMilliMeter);
+  //         // int16_t dist = pMultiRangingData->RangeData[j].RangeMilliMeter;
+  //       }
+  //     }
+  //     status = sensor_vl53l4cx_sat.VL53L4CX_ClearInterruptAndStartMeasurement();
+  //   }
+  // }
   // ir readings for left and right beacons for use in below task behavior
   int ir1_freq_avg = ir1_freq_sum / 5;
   int ir2_freq_avg = ir2_freq_sum / 5;
@@ -322,8 +320,20 @@ void loop() {
   Serial.print("ir2: ");
   Serial.println(ir2_freq_avg);
 
+  //clear measurements if long time
+  int ms_ir1_rise = ir1_rise/1000;
+  int ms_ir2_rise = ir2_rise/1000;
+  if (millis() - ms_ir1_rise > 1000 && millis() - ms_ir2_rise > 1000) {
+    ir1_freq_sum = 0;
+    ir2_freq_sum = 0;
+    int i;
+    for (i = 0; i < 5; i ++) {
+      ir2_freq[i] = 0;
+      ir1_freq[i] = 0;
+    }
+  }
+
   // comms stuff
-  //rcv_pc_udp();
   h.serve();
 
   // depending on current task mode (wall follow, police car push, trophy
@@ -337,7 +347,7 @@ void loop() {
       // wall follow
       //TOF value = tof_val
       //minimum distance to wall = min_dist
-
+      break;
     }
     case 2: {
       // police car push
@@ -345,12 +355,24 @@ void loop() {
     }
     case 3: {
       // fake trophy locate
-      
+      if (ir1_freq_avg > 0 && ir1_freq_avg < 100 && ir2_freq_avg > 0 && ir2_freq_avg < 100) {
+        straight(0, 850);
+      } else if (ir1_freq_avg > 0 && ir1_freq_avg < 100) {
+        turn(0, 850);
+      } else {
+        turn(1, 850);
+      }
       break;
     }
     case 4: {
       // real trophy locate
-      
+      if (ir1_freq_avg > 250 && ir2_freq_avg > 250) {
+        straight(0, 850);
+      } else if (ir1_freq_avg > 250) {
+        turn(0, 850);
+      } else {
+        turn(1, 850);
+      }
       break;
     }
   }
