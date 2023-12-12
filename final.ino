@@ -38,9 +38,8 @@ Group 38
 #define GAME_UDPPORT 2510
 
 #define ESPNOW_CHANNEL 1
-// FIXME fill in mac address of tgt
 #define MAC_RCV \
-  { 0x84, 0xF7, 0x03, 0xA8, 0xBE, 0x30 }
+  { 0xC8, 0xF0, 0x9E, 0xF6, 0xE0, 0xC8 }
 
 const char* ssid = "TP-Link_E0C8";
 const char* pass = "52665134";
