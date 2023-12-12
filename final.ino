@@ -5,7 +5,6 @@ Group 38
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
-#include <Wire.h>
 #include <esp_now.h>
 //#include <vl53l4cx_class.h>
 #include <stdio.h>
@@ -43,8 +42,8 @@ Group 38
 
 const char* ssid = "TP-Link_E0C8";
 const char* pass = "52665134";
-IPAddress src_IP(192, 168, 0, 154);
-IPAddress broadcast_IP(192, 168, 0, 255);
+IPAddress src_IP(192, 168, 1, 154);
+IPAddress broadcast_IP(192, 168, 1, 255);
 HTML510Server h(80);
 WiFiUDP UDPServer;
 
@@ -133,29 +132,32 @@ void handleUDPServer() {
 
   int cb = UDPServer.parsePacket(); // if there is no message cb=0
   while (cb) {
-    packetBuffer[13]=0; // null terminate string
-
+    int x, y;
     //rcv police car
+    packetBuffer[13]=0; // null terminate string
     UDPServer.read(packetBuffer, UDP_PACKET_SIZE);
-    int x = atoi((char *)packetBuffer+3); // ##,####,#### 2nd indexed char
-    int y = atoi((char *)packetBuffer+8); // ##,####,#### 7th indexed char
-    if (strcmp((char*)packetBuffer, "00") == 0) {
+    Serial.println((char*)packetBuffer);
+    packetBuffer[2] = 0;
+    char* team = (char*)packetBuffer;
+    x = atoi((char *)packetBuffer+3); // ##,####,#### 2nd indexed char
+    y = atoi((char *)packetBuffer+8); // ##,####,#### 7th indexed char
+    if (strcmp(team, "00") == 0) {
       pc_x = x;
       pc_y = y;
     }
     cb = UDPServer.parsePacket();
   }
+  char outPBuffer[14];
+  memset(outPBuffer, 0, sizeof (outPBuffer));
+  int wx = v1x < 10000 ? v1x : 0;
+  int wy = v1y < 10000 ? v1y : 0;
+  sprintf(outPBuffer, "%02d:%4d,%4d", TEAM_NUM, wx, wy);
+  // THIS IS THE ERROR SEGMENT FIX THIS PLS
 
-   //send own coords
-  // uint8_t outPBuffer[UDP_PACKET_SIZE];
-  // outPBuffer[13] = 0;
-  // itoa(TEAM_NUM, (char*)outPBuffer, 10);
-  // outPBuffer[2] = 0;
-  // itoa(v1x, (char*)outPBuffer + 3, 10);
-  // outPBuffer[7] = 0;
-  // itoa(v1y, (char*)outPBuffer + 8, 10);
+
+  
   // UDPServer.beginPacket(broadcast_IP, GAME_UDPPORT);
-  // UDPServer.write(outPBuffer, UDP_PACKET_SIZE);
+  // UDPServer.write((unsigned char*)outPBuffer, 13);
   // UDPServer.endPacket();
 }
 
@@ -229,6 +231,7 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.config(src_IP, IPAddress(192, 168, 1, 1), IPAddress(255, 255, 255, 0));
   WiFi.begin(ssid, pass);
+  UDPServer.begin(GAME_UDPPORT);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
@@ -237,8 +240,6 @@ void setup() {
   Serial.print("Use this URL to connect: http://");
   Serial.print(WiFi.localIP());
   Serial.println("/");
-
-  UDPServer.begin(GAME_UDPPORT);
 
   // setup timer autofire for vive reporting at 1hz
   timer = timerBegin(0, 80, true);
@@ -282,10 +283,10 @@ void loop() {
   } else {
     vive2.sync(15);
   }
-  Serial.print("vive x: ");
-  Serial.println(v1x);
-  Serial.print("vive y: ");
-  Serial.println(v1y);
+  // Serial.print("vive x: ");
+  // Serial.println(v1x);
+  // Serial.print("vive y: ");
+  // Serial.println(v1y);
   // heading calculation
   heading = atan2(v2y - v1y, v2x - v1x);
   // TOF reading
@@ -314,10 +315,10 @@ void loop() {
   int ir1_freq_avg = ir1_freq_sum / 5;
   int ir2_freq_avg = ir2_freq_sum / 5;
 
-  Serial.print("ir1: ");
-  Serial.println(ir1_freq_avg);
-  Serial.print("ir2: ");
-  Serial.println(ir2_freq_avg);
+  // Serial.print("ir1: ");
+  // Serial.println(ir1_freq_avg);
+  // Serial.print("ir2: ");
+  // Serial.println(ir2_freq_avg);
 
   //clear measurements if long time
   int ms_ir1_rise = ir1_rise/1000;
