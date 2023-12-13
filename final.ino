@@ -28,6 +28,7 @@ Group 38
 #define IR2_PIN 7
 #define WALL_PIN 10
 
+#define sign(x) ((x) < 0 ? -1 : ((x) > 0 ? 1 : 0))
 // #define TOF_SCL 11
 // #define TOF_SDA 10
 // #define TOF_XSHUT 9
@@ -35,6 +36,7 @@ Group 38
 #define M_FREQ 2000
 #define RES_BITS 10
 
+// #define GAME_UDPPORT 2510
 unsigned int GAME_UDPPORT = 2510;
 
 #define ESPNOW_CHANNEL 1
@@ -53,7 +55,7 @@ Vive510 vive2(VIVE2_PIN);
 
 // vive coords + derived heading of bot
 uint16_t v1x, v1y, v2x, v2y;
-float heading;
+float heading, heading_prev;
 
 //VL53L4CX sensor_vl53l4cx_sat(&Wire, TOF_XSHUT);
 // closest tof obj dist (mm)
@@ -61,6 +63,12 @@ int closest_tof_dist;
 
 // police car vive coords
 int pc_x, pc_y;
+
+
+// Vive filtering
+uint16_t vive_thresh;
+uint16_t v1x_prev, v1y_prev, v2x_prev, v2y_prev;
+
 
 hw_timer_t* timer = NULL;
 
@@ -134,27 +142,31 @@ void handleUDPServer() {
   int cb = UDPServer.parsePacket();  // if there is no message cb=0
   while (cb) {
     packetBuffer[13] = 0;  // null terminate string
+
     //rcv police car
     UDPServer.read(packetBuffer, UDP_PACKET_SIZE);
-    packetBuffer[2] = 0;
+    // packetBuffer[2] = 0;
     int x = atoi((char*)packetBuffer + 3);  // ##,####,#### 2nd indexed char
     int y = atoi((char*)packetBuffer + 8);  // ##,####,#### 7th indexed char
-    if (strcmp((char*)packetBuffer, "00") == 0) {
+    // Serial.println(atoi((char*)packetBuffer));
+    // if ((((char*)packetBuffer)[0] == 0) && (((char*)packetBuffer)[1] == 0)) {
+    if (atoi((char*)packetBuffer) == 0) {
       pc_x = x;
       pc_y = y;
     }
     cb = UDPServer.parsePacket();
   }
-  // TODO FIX UDP SENDING BELOW
-  // currently segfaults at packet sending
 
-  // char outPBuffer[13];
-  // //memset(outPBuffer, 0, sizeof (outPBuffer));
-  // int wx = v1x < 10000 ? v1x : 0;
-  // int wy = v1y < 10000 ? v1y : 0;
-  // sprintf(outPBuffer, "%2d:%4d,%4d", TEAM_NUM, wx, wy);
+  //send own coords
+  // uint8_t outPBuffer[UDP_PACKET_SIZE];
+  // outPBuffer[13] = 0;
+  // itoa(TEAM_NUM, (char*)outPBuffer, 10);
+  // outPBuffer[2] = 0;
+  // itoa(v1x, (char*)outPBuffer + 3, 10);
+  // outPBuffer[7] = 0;
+  // itoa(v1y, (char*)outPBuffer + 8, 10);
   // UDPServer.beginPacket(broadcast_IP, GAME_UDPPORT);
-  // UDPServer.write((uint8_t*) outPBuffer, 13);
+  // UDPServer.write(outPBuffer, UDP_PACKET_SIZE);
   // UDPServer.endPacket();
 }
 
@@ -193,6 +205,32 @@ void IRAM_ATTR one_hz_timer() {
 void switchMode() {
   mode = h.getVal();
   //esp_now_send(peer1.peer_addr, espnow_msg, sizeof(espnow_msg));
+}
+
+float angle_wrap(float radians) {
+    while (radians > 3.1415926535897932384626433832795) {
+        radians -= 2 * 3.1415926535897932384626433832795;
+    }
+    while (radians < -3.1415926535897932384626433832795) {
+        radians += 2 * 3.1415926535897932384626433832795;
+    }
+
+    // keep in mind that the result is in radians
+    return radians;
+}
+
+float p_control(float kp, float min_pwm, float state, float target) {
+  float e = target - state;
+  float output = kp * e;
+  if (abs(output) < min_pwm) {
+    output = min_pwm * sign(output);
+  }
+
+  if (abs(output) >= 1023) {
+    output = 1023 * sign(output);
+  }
+  return output; 
+
 }
 
 void setup() {
@@ -266,35 +304,120 @@ void setup() {
   h.attachHandler("/turn?val=", xmlTurn);
   h.attachHandler("/stop", stop);
   h.attachHandler("/switchmode?val=", switchMode);
+
+  heading = 0;
+  heading_prev = 0;
 }
 
+
+// void calibrate_vive_filter() {
+//   Serial.println("Starting calibration...")
+//   unsigned long start_time = millis();
+//   unsigned long wait_time = 3000;
+//   float x1_avg = 0;
+//   float x2_avg = 0;
+//   float y1_avg = 0;
+//   float v2_avg = 0;
+//   int x1_avg_count, x2_avg_count, y1_avg_count, y2_avg_count;
+//   while (millis() - start_time < wait_time) {
+//     // Vive setup
+//     if (vive1.status() == VIVE_RECEIVING) {
+//       v2y = vive1.xCoord();
+//       v2x = vive1.yCoord();
+
+//       x2_avg += (float) v2x;
+//       y2_avg += (float) v2y;
+
+//       x2_avg_count += 1;
+//       y2_avg_count += 1;
+//     } else {
+//       vive1.sync(15);
+//     }
+//     if (vive2.status() == VIVE_RECEIVING) {
+//       v1x = vive2.xCoord();
+//       v1y = vive2.yCoord();
+
+//       x1_avg += (float) v1x;
+//       y1_avg += (float) v1y;
+
+//       x1_avg_count += 1;
+//       y1_avg_count += 1;
+//     } else {
+//       vive2.sync(15);
+//     }
+//     delay(10);
+//   }
+//   Serial.print("x1 average: ");
+//   Serial.println(x1_avg / ((float) x1_avg_count) );
+//   Serial.print("y1 average: ");
+//   Serial.println(y1_avg / ((float) y1_avg_count) );
+
+//   Serial.print("x2 average: ");
+//   Serial.println(x2_avg / ((float) x2_avg_count) );
+//   Serial.print("y2 average: ");
+//   Serial.println(y2_avg / ((float) y2_avg_count) );
+// }
 unsigned long last_turn=0;
+
+bool found_car = false;
+
+// Vive filtering flag
 
 // the loop function runs over and over again forever
 void loop() {
   // vive coord reading
   if (vive1.status() == VIVE_RECEIVING) {
-    v1x = vive1.xCoord();
-    v1y = vive1.yCoord();
+    v2y = vive1.xCoord();
+    v2x = vive1.yCoord();
   } else {
     vive1.sync(15);
   }
   if (vive2.status() == VIVE_RECEIVING) {
-    v2y = vive2.xCoord();
-    v2x = vive2.yCoord();
+    v1x = vive2.xCoord();
+    v1y = vive2.yCoord();
   } else {
     vive2.sync(15);
   }
-  Serial.print("vive 1 x: ");
-  Serial.println(v1x);
-  Serial.print("vive 1 y: ");
-  Serial.println(v1y);
-  Serial.print("vive 2 x: ");
-  Serial.println(v2x);
-  Serial.print("vive 2 y: ");
-  Serial.println(v2y);
+  // Serial.print("vive 1 x: ");
+  // Serial.println(v1x);
+  // Serial.print("vive 1 y: ");
+  // Serial.println(v1y);
+  // Serial.print("vive 2 x: ");
+  // Serial.println(v2x);
+  // Serial.print("vive 2 y: ");
+  // Serial.println(v2y);
+
   // heading calculation
   heading = atan2(v2y - v1y, v2x - v1x);
+
+  if (abs((180 * heading / 3.1415926535897932384626433832795) - (180 * heading_prev / 3.1415926535897932384626433832795)) > 20) {
+    heading = heading_prev;
+  } else {
+    heading_prev = heading;
+  }
+
+  // Temp police car coords
+  // uint16_t police_car_x = 2535;
+  // uint16_t police_car_y = 4299;
+  Serial.print("Police car x: ");
+  Serial.println(pc_x);
+  Serial.print("Police car y: ");
+  Serial.println(pc_y);
+
+
+  float angle_to_car = atan2(pc_y - v1y, pc_x - v1x);
+  angle_to_car += 0.1 * sign(angle_to_car);
+
+  Serial.print("heading: ");
+  Serial.println(180.0 * heading / 3.1415926535897932384626433832795);
+  Serial.print("previous heading: ");
+  Serial.println(180.0 * heading_prev / 3.1415926535897932384626433832795);
+  Serial.print("angle to car: ");
+  Serial.println(180.0 * angle_to_car / 3.1415926535897932384626433832795);
+  
+
+  
+
   // TOF reading
   // VL53L4CX_MultiRangingData_t MultiRangingData;
   // VL53L4CX_MultiRangingData_t* pMultiRangingData = &MultiRangingData;
@@ -321,10 +444,10 @@ void loop() {
   int ir1_freq_avg = ir1_freq_sum / 5;
   int ir2_freq_avg = ir2_freq_sum / 5;
 
-  Serial.print("ir1: ");
-  Serial.println(ir1_freq_avg);
-  Serial.print("ir2: ");
-  Serial.println(ir2_freq_avg);
+  // Serial.print("ir1: ");
+  // Serial.println(ir1_freq_avg);
+  // Serial.print("ir2: ");
+  // Serial.println(ir2_freq_avg);
 
   //clear measurements if long time
   int ms_ir1_rise = ir1_rise / 1000;
@@ -370,7 +493,38 @@ void loop() {
       }
     case 2:
       {
+        // angle_to_car = 45 * 3.1415926535897932384626433832795 / 180;
+        // Serial.println(abs(angle_to_car - heading));
         // police car push
+        if ((abs(abs(angle_to_car) - abs(heading)) < 0.075) && (found_car == false)) {
+          Serial.println("FOUND THE CAR!!");
+          found_car = true;
+          delay(2000);
+          straight(0, 1023);
+          delay(10000);
+          stop();
+        }
+
+        if (found_car == false) {
+          int pwm = (int) p_control(1000, 1022, 0, angle_wrap(angle_to_car - heading));
+          int dir = sign(pwm);
+          Serial.print("PWM: ");
+          Serial.println(pwm);
+          if (dir == 1) {
+            dir = 0;
+          } else if (dir == -1) {
+            dir = 1;
+          }
+          turn(dir, abs(pwm));
+          delay(50);
+          stop();
+          delay(100);
+        } else {
+          Serial.println("STOPPING!");
+          stop();
+        }
+        
+        
         break;
       }
     case 3:
