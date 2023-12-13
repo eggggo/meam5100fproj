@@ -35,7 +35,7 @@ Group 38
 #define M_FREQ 2000
 #define RES_BITS 10
 
-#define GAME_UDPPORT 2510
+unsigned int GAME_UDPPORT = 2510;
 
 #define ESPNOW_CHANNEL 1
 #define MAC_RCV \
@@ -134,9 +134,9 @@ void handleUDPServer() {
   int cb = UDPServer.parsePacket();  // if there is no message cb=0
   while (cb) {
     packetBuffer[13] = 0;  // null terminate string
-
     //rcv police car
     UDPServer.read(packetBuffer, UDP_PACKET_SIZE);
+    packetBuffer[2] = 0;
     int x = atoi((char*)packetBuffer + 3);  // ##,####,#### 2nd indexed char
     int y = atoi((char*)packetBuffer + 8);  // ##,####,#### 7th indexed char
     if (strcmp((char*)packetBuffer, "00") == 0) {
@@ -145,17 +145,16 @@ void handleUDPServer() {
     }
     cb = UDPServer.parsePacket();
   }
+  // TODO FIX UDP SENDING BELOW
+  // currently segfaults at packet sending
 
-  //send own coords
-  // uint8_t outPBuffer[UDP_PACKET_SIZE];
-  // outPBuffer[13] = 0;
-  // itoa(TEAM_NUM, (char*)outPBuffer, 10);
-  // outPBuffer[2] = 0;
-  // itoa(v1x, (char*)outPBuffer + 3, 10);
-  // outPBuffer[7] = 0;
-  // itoa(v1y, (char*)outPBuffer + 8, 10);
+  // char outPBuffer[13];
+  // //memset(outPBuffer, 0, sizeof (outPBuffer));
+  // int wx = v1x < 10000 ? v1x : 0;
+  // int wy = v1y < 10000 ? v1y : 0;
+  // sprintf(outPBuffer, "%2d:%4d,%4d", TEAM_NUM, wx, wy);
   // UDPServer.beginPacket(broadcast_IP, GAME_UDPPORT);
-  // UDPServer.write(outPBuffer, UDP_PACKET_SIZE);
+  // UDPServer.write((uint8_t*) outPBuffer, 13);
   // UDPServer.endPacket();
 }
 
