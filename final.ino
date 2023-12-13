@@ -485,7 +485,7 @@ void loop() {
           straight(1, 1023);
           delay(250);
           turn(0 ,1023);
-          delay(440);
+          delay(490);
           straight(0, 1023);
           last_turn = millis();
         }
