@@ -5,6 +5,7 @@ Group 38
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <Wire.h>
 #include <esp_now.h>
 //#include <vl53l4cx_class.h>
 #include <stdio.h>
@@ -16,16 +17,16 @@ Group 38
 #define TEAM_NUM 38
 
 // assumes m1 on left, m2 on right from back of bot
-#define M1_PWM_PIN 45
-#define M1_H1_PIN 40
-#define M2_PWM_PIN 35
-#define M2_H1_PIN 37
+#define M1_PWM_PIN 18
+#define M1_H1_PIN 0
+#define M2_PWM_PIN 19
+#define M2_H1_PIN 1
 
-#define VIVE1_PIN 1
-#define VIVE2_PIN 2
-
-#define IR1_PIN 3
-#define IR2_PIN 4
+#define VIVE1_PIN 4
+#define VIVE2_PIN 5
+#define IR1_PIN 6
+#define IR2_PIN 7
+#define WALL_PIN 10
 
 // #define TOF_SCL 11
 // #define TOF_SDA 10
@@ -43,7 +44,7 @@ Group 38
 const char* ssid = "TP-Link_E0C8";
 const char* pass = "52665134";
 IPAddress src_IP(192, 168, 1, 154);
-IPAddress broadcast_IP(192, 168, 1, 255);
+IPAddress broadcast_IP(192, 168, 0, 255);
 HTML510Server h(80);
 WiFiUDP UDPServer;
 
@@ -64,16 +65,16 @@ int pc_x, pc_y;
 hw_timer_t* timer = NULL;
 
 esp_now_peer_info_t peer1 = {
-    .peer_addr = MAC_RCV,
-    .channel = ESPNOW_CHANNEL,
-    .encrypt = false,
+  .peer_addr = MAC_RCV,
+  .channel = ESPNOW_CHANNEL,
+  .encrypt = false,
 };
 uint8_t espnow_msg[1];
 
 // sliding window avg of 5 ir freq measurements
-int ir1_freq[5] = {0, 0, 0, 0, 0}, ir2_freq[5] = {0, 0, 0, 0, 0};
-int ir1_freq_idx=0, ir2_freq_idx=0;
-int ir1_freq_sum=0, ir2_freq_sum=0;
+int ir1_freq[5] = { 0, 0, 0, 0, 0 }, ir2_freq[5] = { 0, 0, 0, 0, 0 };
+int ir1_freq_idx = 0, ir2_freq_idx = 0;
+int ir1_freq_sum = 0, ir2_freq_sum = 0;
 unsigned long ir1_rise, ir2_rise;
 
 /*
@@ -127,37 +128,34 @@ void handleRoot() {
 
 //handle all udp server actions(rcv and transmit vive coords)
 void handleUDPServer() {
-  const int UDP_PACKET_SIZE = 14; // can be up to 65535          
+  const int UDP_PACKET_SIZE = 14;  // can be up to 65535          
   uint8_t packetBuffer[UDP_PACKET_SIZE];
 
-  int cb = UDPServer.parsePacket(); // if there is no message cb=0
+  int cb = UDPServer.parsePacket();  // if there is no message cb=0
   while (cb) {
-    int x, y;
+    packetBuffer[13] = 0;  // null terminate string
+
     //rcv police car
-    packetBuffer[13]=0; // null terminate string
     UDPServer.read(packetBuffer, UDP_PACKET_SIZE);
-    Serial.println((char*)packetBuffer);
-    packetBuffer[2] = 0;
-    char* team = (char*)packetBuffer;
-    x = atoi((char *)packetBuffer+3); // ##,####,#### 2nd indexed char
-    y = atoi((char *)packetBuffer+8); // ##,####,#### 7th indexed char
-    if (strcmp(team, "00") == 0) {
+    int x = atoi((char*)packetBuffer + 3);  // ##,####,#### 2nd indexed char
+    int y = atoi((char*)packetBuffer + 8);  // ##,####,#### 7th indexed char
+    if (strcmp((char*)packetBuffer, "00") == 0) {
       pc_x = x;
       pc_y = y;
     }
     cb = UDPServer.parsePacket();
   }
-  char outPBuffer[14];
-  memset(outPBuffer, 0, sizeof (outPBuffer));
-  int wx = v1x < 10000 ? v1x : 0;
-  int wy = v1y < 10000 ? v1y : 0;
-  sprintf(outPBuffer, "%02d:%4d,%4d", TEAM_NUM, wx, wy);
-  // THIS IS THE ERROR SEGMENT FIX THIS PLS
 
-
-  
+  //send own coords
+  // uint8_t outPBuffer[UDP_PACKET_SIZE];
+  // outPBuffer[13] = 0;
+  // itoa(TEAM_NUM, (char*)outPBuffer, 10);
+  // outPBuffer[2] = 0;
+  // itoa(v1x, (char*)outPBuffer + 3, 10);
+  // outPBuffer[7] = 0;
+  // itoa(v1y, (char*)outPBuffer + 8, 10);
   // UDPServer.beginPacket(broadcast_IP, GAME_UDPPORT);
-  // UDPServer.write((unsigned char*)outPBuffer, 13);
+  // UDPServer.write(outPBuffer, UDP_PACKET_SIZE);
   // UDPServer.endPacket();
 }
 
@@ -224,6 +222,8 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(IR1_PIN), ir1_onchange, RISING);
   attachInterrupt(digitalPinToInterrupt(IR2_PIN), ir2_onchange, RISING);
 
+  pinMode(WALL_PIN, INPUT_PULLUP);
+
   // setup udp send/receive for vive send and police car coord rcv + web server
   Serial.begin(9600);
   Serial.print("Connecting to ");
@@ -231,7 +231,6 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.config(src_IP, IPAddress(192, 168, 1, 1), IPAddress(255, 255, 255, 0));
   WiFi.begin(ssid, pass);
-  UDPServer.begin(GAME_UDPPORT);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
@@ -240,6 +239,8 @@ void setup() {
   Serial.print("Use this URL to connect: http://");
   Serial.print(WiFi.localIP());
   Serial.println("/");
+
+  UDPServer.begin(GAME_UDPPORT);
 
   // setup timer autofire for vive reporting at 1hz
   timer = timerBegin(0, 80, true);
@@ -268,6 +269,8 @@ void setup() {
   h.attachHandler("/switchmode?val=", switchMode);
 }
 
+unsigned long last_turn=0;
+
 // the loop function runs over and over again forever
 void loop() {
   // vive coord reading
@@ -278,15 +281,19 @@ void loop() {
     vive1.sync(15);
   }
   if (vive2.status() == VIVE_RECEIVING) {
-    v2x = vive2.xCoord();
-    v2y = vive2.yCoord();
+    v2y = vive2.xCoord();
+    v2x = vive2.yCoord();
   } else {
     vive2.sync(15);
   }
-  // Serial.print("vive x: ");
-  // Serial.println(v1x);
-  // Serial.print("vive y: ");
-  // Serial.println(v1y);
+  Serial.print("vive 1 x: ");
+  Serial.println(v1x);
+  Serial.print("vive 1 y: ");
+  Serial.println(v1y);
+  Serial.print("vive 2 x: ");
+  Serial.println(v2x);
+  Serial.print("vive 2 y: ");
+  Serial.println(v2y);
   // heading calculation
   heading = atan2(v2y - v1y, v2x - v1x);
   // TOF reading
@@ -315,65 +322,82 @@ void loop() {
   int ir1_freq_avg = ir1_freq_sum / 5;
   int ir2_freq_avg = ir2_freq_sum / 5;
 
-  // Serial.print("ir1: ");
-  // Serial.println(ir1_freq_avg);
-  // Serial.print("ir2: ");
-  // Serial.println(ir2_freq_avg);
+  Serial.print("ir1: ");
+  Serial.println(ir1_freq_avg);
+  Serial.print("ir2: ");
+  Serial.println(ir2_freq_avg);
 
   //clear measurements if long time
-  int ms_ir1_rise = ir1_rise/1000;
-  int ms_ir2_rise = ir2_rise/1000;
+  int ms_ir1_rise = ir1_rise / 1000;
+  int ms_ir2_rise = ir2_rise / 1000;
   if (millis() - ms_ir1_rise > 1000 && millis() - ms_ir2_rise > 1000) {
     ir1_freq_sum = 0;
     ir2_freq_sum = 0;
     int i;
-    for (i = 0; i < 5; i ++) {
+    for (i = 0; i < 5; i++) {
       ir2_freq[i] = 0;
       ir1_freq[i] = 0;
     }
   }
-
   // comms stuff
   h.serve();
 
   // depending on current task mode (wall follow, police car push, trophy
   // locate) change behavior
   switch (mode) {
-    case 0: {
-      stop();
-      break;
-    }
-    case 1: {
-      // wall follow
-      //TOF value = tof_val
-      //minimum distance to wall = min_dist
-      break;
-    }
-    case 2: {
-      // police car push
-      break;
-    }
-    case 3: {
-      // fake trophy locate
-      if (ir1_freq_avg > 0 && ir1_freq_avg < 100 && ir2_freq_avg > 0 && ir2_freq_avg < 100) {
-        straight(0, 850);
-      } else if (ir1_freq_avg > 0 && ir1_freq_avg < 100) {
-        turn(0, 850);
-      } else {
-        turn(1, 850);
+    case 0:
+      {
+        stop();
+        break;
       }
-      break;
-    }
-    case 4: {
-      // real trophy locate
-      if (ir1_freq_avg > 250 && ir2_freq_avg > 250) {
-        straight(0, 850);
-      } else if (ir1_freq_avg > 250) {
-        turn(0, 850);
-      } else {
-        turn(1, 850);
+    case 1:
+      {
+        // wall follow
+        //TOF value = tof_val
+        //minimum distance to wall = min_dist
+        straight(0, 1023);
+        // delay(10);
+        
+
+        if (digitalRead(WALL_PIN) == 0 && millis() - last_turn > 1000) {
+          straight(1, 1023);
+          delay(250);
+          turn(0 ,1023);
+          delay(440);
+          straight(0, 1023);
+          last_turn = millis();
+        }
+        break;
       }
-      break;
-    }
+    case 2:
+      {
+        // police car push
+        break;
+      }
+    case 3:
+      {
+        // fake trophy locate
+        if (ir1_freq_avg > 0 && ir1_freq_avg < 100 && ir2_freq_avg > 0 && ir2_freq_avg < 100) {
+          straight(0, 850);
+        } else if (ir1_freq_avg > 0 && ir1_freq_avg < 100) {
+          turn(0, 850);
+        } else {
+          turn(1, 850);
+        }
+        break;
+      }
+    case 4:
+      {
+        // real trophy locate
+        if (ir1_freq_avg > 250 && ir2_freq_avg > 250) {
+          straight(0, 850);
+        } else if (ir1_freq_avg > 250) {
+          turn(0, 850);
+        } else {
+          turn(1, 850);
+        }
+        break;
+      }
   }
+  delay(500);
 }
